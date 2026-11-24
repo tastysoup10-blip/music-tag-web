@@ -31,10 +31,10 @@
 <div class="two"><div class="field"><label for="year">Year</label><input id="year" inputmode="numeric" placeholder="2026"></div><div class="field"><label for="genre">Genre</label><input id="genre" placeholder="Rock"></div></div>
 <div class="field"><label for="disc">Disc number</label><input id="disc" value="1"></div>
 <div class="field"><label for="comment">Comment</label><input id="comment" placeholder="Optional"></div>
-</div><div class="sidebuttons"><button id="apply" disabled>Apply album details to tracks</button><button id="export" disabled>Export metadata CSV</button><button class="primary" id="write" disabled>Write MP3 tags & download</button></div><div class="status" id="status">Import tracks to begin.</div></aside>
+</div><div class="sidebuttons"><button id="apply" disabled>Apply album details to tracks</button><button id="export" disabled>Export metadata CSV</button><button class="primary" id="write" disabled>Write tags & download</button></div><div class="status" id="status">Import tracks to begin.</div></aside>
 </div>
-<div class="notice"><strong>Tag writing status:</strong> This first version writes ID3 tags to MP3 files. Other formats can be imported and organized, but their embedded tags are not changed yet. FLAC and ALAC/M4A support are planned as separate format-specific additions.</div>
-<div class="footer">MusicTag v1.1.0 · MusicTag is an independent project and is not affiliated with MusicBrainz or MusicBrainz Picard.</div>
+<div class="notice"><strong>Tag writing:</strong> MP3 and M4A (including ALAC) files can be tagged and downloaded. FLAC and other formats can be imported and organized, but their embedded tags are not written yet. Original files are never modified.</div>
+<div class="footer">MusicTag v1.2.0 · MusicTag is an independent project and is not affiliated with MusicBrainz or MusicBrainz Picard.</div>
 </div>
 <script type="module">
 import ID3Writer from 'https://cdn.jsdelivr.net/npm/browser-id3-writer@4.4.0/+esm';
@@ -106,7 +106,42 @@ $('apply').onclick=()=>{const artist=$('artist').value;tracks.forEach((t,i)=>{t.
 function csvCell(v){return '"'+String(v??'').replace(/"/g,'""')+'"'}
 $('export').onclick=()=>{const headers=['Filename','Title','Artist','Album','Album artist','Track number','Disc number','Year','Genre','Comment'];const rows=tracks.map((t,i)=>[t.file.name,t.title,t.artist||$('artist').value,$('album').value,$('artist').value,t.track||i+1,t.disc||$('disc').value,$('year').value,$('genre').value,$('comment').value]);const csv=[headers,...rows].map(r=>r.map(csvCell).join(',')).join('\r\n');download(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}),'album-metadata.csv');$('status').textContent='Metadata CSV exported.'};
 function download(blob,name){const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)}
-$('write').onclick=async()=>{const mp3=tracks.filter(t=>/\.mp3$/i.test(t.file.name));if(!mp3.length){$('status').textContent='No MP3 files in this album. CSV export is available for all imported formats.';return}if(!confirm('Write tags into '+mp3.length+' MP3 file(s) and download the tagged copies? Original files will not be changed.'))return;$('write').disabled=true;let done=0,failed=0;for(let i=0;i<tracks.length;i++){const t=tracks[i];if(!/\.mp3$/i.test(t.file.name))continue;try{const buffer=await t.file.arrayBuffer();const writer=new ID3Writer(buffer);writer.setFrame('TIT2',t.title||t.file.name.replace(/\.mp3$/i,''));const artist=t.artist||$('artist').value;if(artist)writer.setFrame('TPE1',[artist]);if($('album').value)writer.setFrame('TALB',$('album').value);writer.setFrame('TRCK',String(t.track||i+1));writer.setFrame('TPOS',String(t.disc||$('disc').value||1));if($('year').value)writer.setFrame('TYER',$('year').value);if($('genre').value)writer.setFrame('TCON',[$('genre').value]);if($('comment').value)writer.setFrame('COMM',{language:'eng',description:'',text:$('comment').value});download(writer.getBlob(),t.file.name.replace(/\.mp3$/i,'')+'-tagged.mp3');done++;}catch(err){console.error(err);failed++} $('status').textContent='Writing tags… '+done+' of '+mp3.length+' complete.'} $('write').disabled=false;$('status').textContent='Finished: '+done+' MP3 file(s) tagged and downloaded'+(failed?', '+failed+' failed.':'.')};
+$('write').onclick=async()=>{
+ const writable=tracks.filter(t=>!t.virtual&&/\.(mp3|m4a)$/i.test(t.file.name));
+ if(!writable.length){$('status').textContent='No writable MP3 or M4A files found. M4A includes ALAC files.';return}
+ if(!confirm('Write tags into '+writable.length+' MP3/M4A file(s) and download the tagged copies? Original files will not be changed.'))return;
+ $('write').disabled=true;let done=0,failed=0;const errors=[];
+ let taglib=null;
+ try{if(writable.some(t=>/\.m4a$/i.test(t.file.name)))taglib=await import('https://esm.sh/@dantheman827/taglib-ts@0.1.5/simpleApi.js')}catch(err){console.error(err);errors.push('Could not load the M4A tag writer: '+err.message)}
+ for(let i=0;i<writable.length;i++){
+  const t=writable[i],isM4A=/\.m4a$/i.test(t.file.name);
+  try{
+   if(isM4A){
+    if(!taglib)throw new Error('M4A tag writer did not load');
+    const tags={title:t.title||t.file.name.replace(/\.m4a$/i,''),artist:t.artist||$('artist').value,album:$('album').value,comment:$('comment').value,genre:$('genre').value};
+    const year=Number($('year').value);if(year>0)tags.year=year;
+    const trackNo=Number.parseInt(t.track||String(i+1),10);if(trackNo>0)tags.track=trackNo;
+    const modified=await taglib.writeTags(t.file,tags);
+    if(!modified)throw new Error('The M4A file could not be tagged');
+    download(new Blob([modified],{type:'audio/mp4'}),t.file.name.replace(/\.m4a$/i,'')+'-tagged.m4a');
+   }else{
+    const buffer=await t.file.arrayBuffer();const writer=new ID3Writer(buffer);
+    writer.setFrame('TIT2',t.title||t.file.name.replace(/\.mp3$/i,''));
+    const artist=t.artist||$('artist').value;if(artist)writer.setFrame('TPE1',[artist]);
+    if($('album').value)writer.setFrame('TALB',$('album').value);
+    writer.setFrame('TRCK',String(t.track||i+1));writer.setFrame('TPOS',String(t.disc||$('disc').value||1));
+    if($('year').value)writer.setFrame('TYER',$('year').value);
+    if($('genre').value)writer.setFrame('TCON',[$('genre').value]);
+    if($('comment').value)writer.setFrame('COMM',{language:'eng',description:'',text:$('comment').value});
+    download(writer.getBlob(),t.file.name.replace(/\.mp3$/i,'')+'-tagged.mp3');
+   }
+   done++;
+  }catch(err){console.error(err);failed++;errors.push(t.file.name+': '+err.message)}
+  $('status').textContent='Writing tags… '+(i+1)+' of '+writable.length+' processed.';
+ }
+ $('write').disabled=false;
+ $('status').textContent='Finished: '+done+' tagged and downloaded, '+failed+' failed.'+(errors.length?' First error: '+errors[0]:'');
+};
 $('demo').onclick=()=>{tracks=[1,2,3,4].map((n)=>({file:new File([new Uint8Array(0)],'Track '+String(n).padStart(2,'0')+'.mp3',{type:'audio/mpeg'}),title:['Opening Track','Second Song','Interlude','Finale'][n-1],artist:'',track:String(n),disc:'1'}));$('album').value='Example Album';$('artist').value='Example Artist';$('year').value='2026';$('genre').value='Rock';render();$('status').textContent='Sample data loaded. Import real files to write actual tags.'};
 render();
 </script>
