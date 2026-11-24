@@ -34,7 +34,7 @@
 </div><div class="sidebuttons"><button id="apply" disabled>Apply album details to tracks</button><button id="export" disabled>Export metadata CSV</button><button class="primary" id="write" disabled>Write tags & download</button></div><div class="status" id="status">Import tracks to begin.</div></aside>
 </div>
 <div class="notice"><strong>Tag writing:</strong> MP3 and M4A (including ALAC) files can be tagged and downloaded. FLAC and other formats can be imported and organized, but their embedded tags are not written yet. Original files are never modified.</div>
-<div class="footer">MusicTag v1.2.0 · MusicTag is an independent project and is not affiliated with MusicBrainz or MusicBrainz Picard.</div>
+<div class="footer">MusicTag v1.2.1 · MusicTag is an independent project and is not affiliated with MusicBrainz or MusicBrainz Picard.</div>
 </div>
 <script type="module">
 import ID3Writer from 'https://cdn.jsdelivr.net/npm/browser-id3-writer@4.4.0/+esm';
@@ -47,7 +47,30 @@ const mbBase='https://musicbrainz.org/ws/2';
 function mbArtistName(credit){return (credit||[]).map(a=>(a.name||a.artist?.name||'')+(a.joinphrase||'')).join('').trim()}
 function mbDate(release){return release.date||''}
 function mbStatus(message){$('mbstatus').textContent=message}
-async function mbFetch(url){const wait=Math.max(0,1100-(Date.now()-lastMBRequest));if(wait)await new Promise(resolve=>setTimeout(resolve,wait));lastMBRequest=Date.now();const response=await fetch(url,{headers:{'Accept':'application/json'}});if(!response.ok)throw new Error('MusicBrainz returned HTTP '+response.status);return response.json()}
+async function mbFetch(url){
+ let lastError;
+ for(let attempt=0;attempt<3;attempt++){
+  const wait=Math.max(0,1100-(Date.now()-lastMBRequest));
+  if(wait)await new Promise(resolve=>setTimeout(resolve,wait));
+  lastMBRequest=Date.now();
+  try{
+   const response=await fetch(url,{headers:{'Accept':'application/json'}});
+   if(response.ok)return await response.json();
+   if(![429,500,502,503,504].includes(response.status))throw new Error('MusicBrainz returned HTTP '+response.status);
+   const retry=response.headers.get('Retry-After');
+   const retryMs=retry?(Number.isFinite(Number(retry))?Number(retry)*1000:Math.max(0,Date.parse(retry)-Date.now())):0;
+   lastError=new Error('MusicBrainz is temporarily busy (HTTP '+response.status+')');
+   if(attempt===2)break;
+   const backoff=Math.min(8000,1500*Math.pow(2,attempt));
+   await new Promise(resolve=>setTimeout(resolve,Math.max(backoff,retryMs)));
+  }catch(err){
+   lastError=err;
+   if(attempt===2||String(err.message).includes('HTTP '))throw err;
+   await new Promise(resolve=>setTimeout(resolve,1500*Math.pow(2,attempt)));
+  }
+ }
+ throw lastError||new Error('MusicBrainz is temporarily unavailable');
+}
 $('mbsearch').onclick=async()=>{
  const title=$('mbquery').value.trim(),artist=$('mbartist').value.trim();
  if(!title){mbStatus('Enter an album title first.');return}
@@ -61,7 +84,7 @@ $('mbsearch').onclick=async()=>{
   $('mbresults').classList.remove('hidden');
   $('mbresults').querySelectorAll('[data-release]').forEach(b=>b.onclick=()=>loadMBRelease(b.dataset.release,b));
   mbStatus('Found '+items.length+' releases. Choose the edition that matches your album.');
- }catch(err){console.error(err);mbStatus('Search failed: '+err.message+'. MusicBrainz may be temporarily unavailable or the browser may block the request.')}
+ }catch(err){console.error(err);mbStatus(err.message.includes('temporarily busy')?'MusicBrainz is temporarily overloaded. MusicTag retried automatically; please wait a little and try again.':'Search failed: '+err.message+'. Check your connection and try again.')}
  finally{$('mbsearch').disabled=false}
 };
 async function loadMBRelease(id,button){
