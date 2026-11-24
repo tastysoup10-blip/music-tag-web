@@ -34,7 +34,7 @@
 </div><div class="sidebuttons"><button id="apply" disabled>Apply album details to tracks</button><button id="export" disabled>Export metadata CSV</button><button class="primary" id="write" disabled>Write tags & download ZIP</button></div><div class="status" id="status">Import tracks to begin.</div></aside>
 </div>
 <div class="notice"><strong>Tag writing:</strong> MP3 and M4A (including ALAC) files can be tagged and downloaded. FLAC and other formats can be imported and organized, but their embedded tags are not written yet. Original files are never modified.</div>
-<div class="footer">MusicTag v1.2.5 · MusicTag is an independent project and is not affiliated with MusicBrainz or MusicBrainz Picard.</div>
+<div class="footer">MusicTag v1.2.6 · MusicTag is an independent project and is not affiliated with MusicBrainz or MusicBrainz Picard.</div>
 </div>
 <script type="module">
 import ID3Writer from 'https://cdn.jsdelivr.net/npm/browser-id3-writer@4.4.0/+esm';
@@ -169,6 +169,7 @@ $('write').onclick=async()=>{
     if(year)writer.setFrame('TYER',year);
     if(genre)writer.setFrame('TCON',[genre]);
     if(comment)writer.setFrame('COMM',{language:'eng',description:'',text:comment});
+    writer.addTag();
     const mp3Bytes=new Uint8Array(await writer.getBlob().arrayBuffer());
     zip.file(taggedFilename(title,trackNo,discNo,'mp3'),mp3Bytes);
    }
