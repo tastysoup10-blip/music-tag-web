@@ -34,7 +34,7 @@
 </div><div class="sidebuttons"><button id="apply" disabled>Apply album details to tracks</button><button id="export" disabled>Export metadata CSV</button><button class="primary" id="write" disabled>Write tags & download ZIP</button></div><div class="status" id="status">Import tracks to begin.</div></aside>
 </div>
 <div class="notice"><strong>Tag writing:</strong> MP3 and M4A (including ALAC) files can be tagged and downloaded. FLAC and other formats can be imported and organized, but their embedded tags are not written yet. Original files are never modified.</div>
-<div class="footer">MusicTag v1.2.4 · MusicTag is an independent project and is not affiliated with MusicBrainz or MusicBrainz Picard.</div>
+<div class="footer">MusicTag v1.2.5 · MusicTag is an independent project and is not affiliated with MusicBrainz or MusicBrainz Picard.</div>
 </div>
 <script type="module">
 import ID3Writer from 'https://cdn.jsdelivr.net/npm/browser-id3-writer@4.4.0/+esm';
@@ -156,7 +156,8 @@ $('write').onclick=async()=>{
     const parsedYear=Number(year);if(parsedYear>0)tags.year=parsedYear;
     const modified=await taglib.writeTags(t.file,tags);
     if(!modified)throw new Error('The M4A file could not be tagged');
-    zip.file(taggedFilename(title,trackNo,discNo,'m4a'),new Blob([modified],{type:'audio/mp4'}));
+    const m4aBytes=new Uint8Array(await new Blob([modified]).arrayBuffer());
+    zip.file(taggedFilename(title,trackNo,discNo,'m4a'),m4aBytes);
    }else{
     const writer=new ID3Writer(await t.file.arrayBuffer());
     writer.setFrame('TIT2',title);
@@ -168,7 +169,8 @@ $('write').onclick=async()=>{
     if(year)writer.setFrame('TYER',year);
     if(genre)writer.setFrame('TCON',[genre]);
     if(comment)writer.setFrame('COMM',{language:'eng',description:'',text:comment});
-    zip.file(taggedFilename(title,trackNo,discNo,'mp3'),writer.getBlob());
+    const mp3Bytes=new Uint8Array(await writer.getBlob().arrayBuffer());
+    zip.file(taggedFilename(title,trackNo,discNo,'mp3'),mp3Bytes);
    }
    done++;
   }catch(err){console.error(err);failed++;errors.push(t.file.name+': '+err.message)}
@@ -176,8 +178,13 @@ $('write').onclick=async()=>{
  }
  if(done){
   try{
-   $('status').textContent='Creating ZIP archive…';
-   const archive=await zip.generateAsync({type:'blob'});
+   $('status').textContent='Building ZIP archive… 0%';
+   // Audio files are already compressed, so STORE avoids wasting time recompressing them.
+   // Convert each tagged track to bytes before adding it to avoid Blob-reader stalls.
+   const archive=await zip.generateAsync(
+    {type:'blob',compression:'STORE',streamFiles:true},
+    meta=>{$('status').textContent='Building ZIP archive… '+Math.round(meta.percent)+'%';}
+   );
    const safeAlbum=(album||'MusicTag Album').replace(/[\\/:*?"<>|]/g,'_').replace(/[. ]+$/,'').trim()||'MusicTag Album';
    download(archive,safeAlbum+' - tagged.zip');
   }catch(err){console.error(err);errors.push('Could not create ZIP archive: '+err.message);failed+=done;done=0}
