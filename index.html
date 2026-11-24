@@ -40,6 +40,7 @@
 import ID3Writer from 'https://cdn.jsdelivr.net/npm/browser-id3-writer@4.4.0/+esm';
 const $=id=>document.getElementById(id);
 let tracks=[];
+let pendingMBTracks=[];
 const fields=['album','artist','year','genre','disc','comment'];
 let lastMBRequest=0;
 const mbBase='https://musicbrainz.org/ws/2';
@@ -75,7 +76,8 @@ async function loadMBRelease(id,button){
   const remote=[];
   media.forEach((medium,discIndex)=>(medium.tracks||[]).forEach((track,index)=>remote.push({title:track.title||track.recording?.title||'',artist:mbArtistName(track['artist-credit'])||credits,track:String(track.number||index+1),disc:String(medium.position||discIndex+1),length:track.length||track.recording?.length||null})));
   if(!remote.length){mbStatus('Release loaded, but MusicBrainz did not return a tracklist.');return}
-  if(tracks.length){
+  pendingMBTracks=remote;
+  if(tracks.length && !tracks.every(t=>t.virtual)){
    const ordered=[...tracks].sort((a,b)=>a.file.name.localeCompare(b.file.name,undefined,{numeric:true,sensitivity:'base'}));
    ordered.forEach((t,i)=>{const match=remote[i];if(match){t.title=match.title;t.artist=match.artist;t.track=match.track;t.disc=match.disc;t.album=data.title;t.albumArtist=credits;t.year=(data.date||'').slice(0,4)}});
    tracks=ordered;
@@ -94,7 +96,7 @@ async function loadMBRelease(id,button){
 function fmt(bytes){if(!Number.isFinite(bytes))return '';let n=bytes;const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return n.toFixed(i?1:0)+' '+u[i]}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function render(){ $('trackcount').textContent=tracks.length?tracks.length+' track'+(tracks.length===1?'':'s')+' · '+fmt(tracks.reduce((n,t)=>n+t.file.size,0)):'No tracks loaded';$('tracks').innerHTML=tracks.length?tracks.map((t,i)=>'<div class="track"><div class="num">'+(i+1)+'</div><div style="min-width:0"><div class="filename" title="'+esc(t.file.name)+'">'+esc(t.title||t.file.name)+'</div><div class="trackmeta">'+esc(t.file.name)+' · '+fmt(t.file.size)+'</div></div><button data-edit="'+i+'">Edit</button></div>').join(''):'<div class="empty">Your imported tracks will appear here.</div>';document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>editTrack(Number(b.dataset.edit)));const has=tracks.length>0;['sort','apply','export','write'].forEach(id=>$(id).disabled=!has);$('trackstatus').textContent=has?'Tracks are held locally in this browser session.':'Ready to import an album.'}
-function addFiles(files){const audio=[...files].filter(f=>f.type.startsWith('audio/')||/\.(mp3|flac|m4a|aac|wav|ogg|opus|aiff?)$/i.test(f.name));if(!audio.length){$('status').textContent='No supported audio files found.';return}tracks.push(...audio.map(file=>({file,title:file.name.replace(/\.[^.]+$/,''),artist:'',track:'',disc:'1'})));tracks.sort((a,b)=>a.file.name.localeCompare(b.file.name,undefined,{numeric:true,sensitivity:'base'}));render();$('status').textContent='Added '+audio.length+' file(s).';$('trackstatus').textContent='Edit individual track titles with the Edit buttons.'}
+function addFiles(files){const audio=[...files].filter(f=>f.type.startsWith('audio/')||/\.(mp3|flac|m4a|aac|wav|ogg|opus|aiff?)$/i.test(f.name));if(!audio.length){$('status').textContent='No supported audio files found.';return}if(tracks.length&&tracks.every(t=>t.virtual))tracks=[];const ordered=[...audio].sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true,sensitivity:'base'}));const offset=tracks.length;tracks.push(...ordered.map((file,i)=>{const m=pendingMBTracks[offset+i];return {file,title:m?.title||file.name.replace(/\.[^.]+$/,''),artist:m?.artist||'',track:m?.track||'',disc:m?.disc||'1'}}));tracks.sort((a,b)=>a.file.name.localeCompare(b.file.name,undefined,{numeric:true,sensitivity:'base'}));render();$('status').textContent='Added '+audio.length+' file(s).'+(pendingMBTracks.length?' MusicBrainz titles were applied by filename order; review the matches.':'');$('trackstatus').textContent='Edit individual track titles with the Edit buttons.'}
 function editTrack(i){const t=tracks[i];const title=prompt('Track title:',t.title);if(title===null)return;t.title=title;const artist=prompt('Track artist (optional):',t.artist);if(artist!==null)t.artist=artist;const num=prompt('Track number:',t.track||String(i+1));if(num!==null)t.track=num;render()}
 $('picker').addEventListener('change',e=>addFiles(e.target.files));
 const drop=$('drop');['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over')}));['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over')}));drop.addEventListener('drop',e=>addFiles(e.dataTransfer.files));
